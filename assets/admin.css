@@ -1,0 +1,63 @@
+/**
+  * WordPress Hashtags CSS file
+  * Author: Samuel Elh
+  */
+
+#ignored-hashtags {
+	display: inline-block;
+	max-width:500px;
+}
+#ignored-hashtags div {
+	display: inline-block;
+	border: 1px solid #ddd;
+	padding: 0;
+	margin-right: 2px;
+	background: #fff;
+	margin-bottom: 2px;
+}
+#ignored-hashtags span.del:after {
+	content: "\2716";
+	border-radius: 0;
+	border-left: 1px solid #ccc;
+	font-family: cursive;
+	color: #555;
+	cursor: pointer;
+	vertical-align: baseline;
+	padding: 4px 6px;
+	padding-right: 8px;
+}
+#ignored-hashtags span.del:hover:after {
+	background-color: #ececec;
+}
+#ignored-hashtags span.cont {
+	padding: 3px 5px;
+	line-height: 25px;
+}
+span.add-hashtag {
+    display: inline-block;
+    border: 1px solid #ddd;
+    background: #fff;
+    padding: 0.27em 11px;
+    vertical-align: bottom;
+    cursor: pointer;
+    font-weight: bold;
+    vertical-align: top;
+}
+table.wpht td {
+	padding: 0.77em;
+}
+
+@media screen and (min-width: 700px) {
+	.wpht_left,
+	.wpht_right {
+		display: inline-block;
+	}
+	.wpht_left {width: 65%;}
+	.wpht_right {
+		width: 25%;
+		vertical-align: top;
+		border-left: 1px solid #ddd;
+		padding: 0 1.2em;
+		margin-top: -5px;
+	}
+}
