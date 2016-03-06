@@ -1,22 +1,175 @@
 <?php
 
 /*
-Plugin Name: WP Hashtags
+Plugin Name: WordPress Hashtags
 Plugin URI: 
 Description: WordPress Hashtags allows you to automatically fetch your blog content and detect hashtags and set them as links
 Author: Samuel Elh
-Version: 0.1
+Version: 0.3
 Author URI: http://samelh.com
 */
 
+// Prevent direct access
 defined('ABSPATH') || exit;
 
 class WPHT
 {
 
+	protected static $instance = null;
+
+	public static function instance() {
+
+		return null == self::$instance ? new self : self::$instance;
+
+	}
+
 	public $settings;
+	public $notice;
 
 	function __construct() {
+
+		$this->settings = array();
+		$this->settings['filtered'] = strlen( get_option('wpht_filter') ) > 1 ? get_option('wpht_filter') : 'pc,pt,wc,wt,bbp,bp,ct';
+		$this->settings['filter'] = explode( ',', $this->settings['filtered'] );
+		$this->settings['def_path'] = 'https://twitter.com/hashtag/[hashtag]/';
+		$this->settings['path'] = strlen( get_option('wpht_path') ) > 1 ? get_option('wpht_path') : $this->settings['def_path'];
+		$this->settings['ignored'] = get_option('wpht_ignored') ? explode(',', get_option('wpht_ignored')) : array();
+		$this->settings['link_settings'] = get_option('wpht_lsettings') ? get_option('wpht_lsettings') : "{'_blank': '', 'nofollow': '', 'title' : '[hashtag]', 'class': '', 'css': '' }";
+
+		$this->settings['link_settings'] = stripslashes( $this->settings['link_settings'] );
+		$this->settings['link_settings'] = str_replace( array( "'", addslashes("'") ), '"', $this->settings['link_settings'] );
+		$this->settings['link_settings'] = stripslashes( $this->settings['link_settings'] );
+		$this->settings['link_settings_json'] = json_decode( $this->settings['link_settings'], true );
+
+		$ob = (object) $this->settings['link_settings_json'];
+		$ob->title = ! empty( $ob->title ) ? (string) $ob->title : '[hashtag]';
+		$ob->css = ! empty( $ob->css ) ? (string) $ob->css : '';
+		$ob->class = ! empty( $ob->class ) ? (string) $ob->class : '';
+		$ob->nofollow = ! empty( $ob->nofollow ) ? (string) $ob->nofollow : '';
+		$ob->_blank = ! empty( $ob->_blank ) ? (string) $ob->_blank : '';
+
+		$this->settings['link_settings_json'] = (array) $ob;
+
+		$this->settings['link_settings_json']['title'] = str_replace( '{apos}', "'", $this->settings['link_settings_json']['title']);
+		$this->settings['link_settings_json']['title'] = '' !== $this->settings['link_settings_json']['title'] ? $this->settings['link_settings_json']['title'] : '[hashtag]';
+
+
+	}
+
+	public function init() {
+
+		if( in_array( 'pc', $this->settings['filter'] ) )
+			add_filter('the_content', array( &$this, 'filter'));
+
+		if( in_array( 'pt', $this->settings['filter'] ) )
+			add_filter('the_title', array( &$this, 'filter'));
+
+		if( in_array( 'wc', $this->settings['filter'] ) )
+			add_filter('widget_text', array( &$this, 'filter'));
+
+		if( in_array( 'wt', $this->settings['filter'] ) )
+			add_filter('widget_title', array( &$this, 'filter'));
+
+		if( in_array( 'bbp', $this->settings['filter'] ) ) {
+			add_filter('bbp_get_topic_content', array( &$this, 'filter'));
+			add_filter('bbp_get_reply_content', array( &$this, 'filter'));
+		}
+	
+		if( in_array( 'ct', $this->settings['filter'] ) )
+			add_filter('comment_text', array( &$this, 'filter'));
+
+		if( in_array( 'bp', $this->settings['filter'] ) )
+			add_filter('bp_get_activity_content_body', array( &$this, 'filter'));
+
+		add_action( 'admin_menu', function() {
+			add_options_page( 'WordPress Hashtags', 'WP Hashtags', 'manage_options', 'wordpress-hashtags', array( &$this, 'wpht_settings' ) );
+		});
+
+		add_filter( "plugin_action_links_".plugin_basename(__FILE__), function($links) {
+		    array_push( $links, '<a href="options-general.php?page=wordpress-hashtags">' . __( 'Settings' ) . '</a>' );
+		  	return $links;
+		});
+
+		add_action('admin_enqueue_scripts', function() {
+			if( isset( $_GET['page'] ) && $_GET['page'] == 'wordpress-hashtags' ) {
+				wp_enqueue_script('wpht-admin-js', plugin_dir_url(__FILE__) . 'assets/admin.js' );
+				wp_enqueue_style('wpht-admin-css', plugin_dir_url(__FILE__) . 'assets/admin.css' );
+			}
+		});
+
+		add_shortcode('wp-hashtag', function( $atts, $content = null ) {
+			return do_shortcode( $this->filter( $content ) );
+		});
+
+	}
+
+	public function filter( $content ) {
+
+		$original_content = $content;
+
+		#header('Content-Type: text/html; charset=utf-8');
+		$content = mb_convert_encoding( (string) $content, 'UTF-8', 'UTF-8');
+		$content = html_entity_decode($content, ENT_QUOTES);
+
+		$content = apply_filters( 'wpht_pre_filter_content', $content );
+
+		preg_match_all( '/#(\w+)/', strip_tags( $content ), $hashtags );
+		$hashtags = array_unique( array_filter( $hashtags[1] ) );
+
+		if( !empty( $this->settings['ignored'] ) ) :
+
+			foreach( $this->settings['ignored'] as $ignored ) :;
+
+				foreach( $hashtags as $key => $hashtag )
+					if( $hashtag == $ignored ) unset( $hashtags[$key] );
+
+			endforeach;
+
+		endif;
+
+		$parsedHashtags = array();
+
+		$href 	= $this->settings['path'];
+		$title 	= $this->settings['link_settings_json']['title'];
+		
+		$atts 	= ' title="' . $title . '"';
+		
+		$class 	= $this->settings['link_settings_json']['class'];
+		$atts 	.= $class !== '' ? ' class="'. $class .'"' : '';
+
+		$style 	= $this->settings['link_settings_json']['css'];
+		$atts 	.= $style !== '' ? ' style="'. $style .'"' : '';
+
+		$blank 	= $this->settings['link_settings_json']['_blank'];
+		$atts 	.= $blank == '1' ? ' target="_blank"' : '';
+
+		$nofollow 	= $this->settings['link_settings_json']['nofollow'];
+		$atts 		.= $nofollow == '1' ? ' rel="nofollow"' : '';
+
+		$link = '<a href="' . $href . '"' . $atts . '>#[hashtag]</a>';
+
+		foreach( $hashtags as $hashtag ) :;
+
+			$parsedHashtags[] = str_replace( '[hashtag]', $hashtag, $link );
+
+		endforeach;
+
+		$tarHashtags = array();
+
+		foreach( $hashtags as $hashtag ) :;
+
+			$tarHashtags[] = '#' . $hashtag;
+
+		endforeach; 
+
+		$content = str_replace( $tarHashtags, $parsedHashtags, $content );
+
+		header('Content-Type: text/html; charset=utf-8');
+		return apply_filters( 'wpht_filter_content', $content, $original_content );
+
+	}
+
+	function wpht_settings() {
 
 		if( isset( $_POST['submit'] ) ) {
 
@@ -43,110 +196,13 @@ class WPHT
 				delete_option( 'wpht_ignored' );
 
 			if( isset( $_POST['wpht_lsettings'] ) )
-				update_option('wpht_lsettings', $_POST['wpht_lsettings'] );
+				update_option('wpht_lsettings', $_POST['wpht_lsettings'] ); // $_POST['wpht_lsettings'] for a hidden field of a JSON object constructed and validated with JS
 			
 			$this->notice = '<div id="updated" class="updated notice is-dismissible"><p>Changes saved successfully.</p></div>';
+
+			$this::__construct();
+
 		}
-
-		$this->settings = array();
-		$this->settings['filtered'] 					= strlen( get_option('wpht_filter') ) > 1 ? get_option('wpht_filter') : 'pc,pt,wc,wt,bbp,bp,ct';
-		$this->settings['filter'] 						= explode( ',', $this->settings['filtered'] );
-		$this->settings['def_path'] 					= 'https://twitter.com/hashtag/[hashtag]/';
-		$this->settings['path'] 						= strlen( get_option('wpht_path') ) > 1 ? get_option('wpht_path') : $this->settings['def_path'];
-		$this->settings['ignored']						= get_option('wpht_ignored') ? explode(',', get_option('wpht_ignored')) : array();
-		$this->settings['link_settings'] 				= get_option('wpht_lsettings') ? get_option('wpht_lsettings') : "{'_blank': '', 'nofollow': '', 'title' : '[hashtag]', 'class': '', 'css': '' }";
-		$this->settings['link_settings_json'] 			= json_decode( stripcslashes( str_replace( "'", '"', $this->settings['link_settings'] ) ), true );
-		$this->settings['link_settings_json']['title'] 	= str_replace( '{apos}', "'", $this->settings['link_settings_json']['title']);
-		$this->settings['link_settings_json']['title'] 	= $this->settings['link_settings_json']['title'] !== '' ? $this->settings['link_settings_json']['title'] : '[hashtag]';
-
-	}
-
-	public function init() {
-
-		if( in_array( 'pc', $this->settings['filter'] ) )
-			add_filter('the_content', array( $this, 'filter'));
-
-		if( in_array( 'pt', $this->settings['filter'] ) )
-			add_filter('the_title', array( $this, 'filter'));
-
-		if( in_array( 'wc', $this->settings['filter'] ) )
-			add_filter('widget_text', array( $this, 'filter'));
-
-		if( in_array( 'wt', $this->settings['filter'] ) )
-			add_filter('widget_title', array( $this, 'filter'));
-
-		if( in_array( 'bbp', $this->settings['filter'] ) ) {
-			add_filter('bbp_get_topic_content', array( $this, 'filter'));
-			add_filter('bbp_get_reply_content', array( $this, 'filter'));
-		}
-	
-		if( in_array( 'ct', $this->settings['filter'] ) )
-			add_filter('comment_text', array( $this, 'filter'));
-
-
-		if( in_array( 'bp', $this->settings['filter'] ) )
-			add_filter('bp_get_activity_content_body', array( $this, 'filter'));
-
-		add_action( 'admin_menu', function() {
-			add_options_page( 'WordPress Hashtags', 'WP Hashtags', 'manage_options', 'wordpress-hashtags', array( $this, 'wpht_settings' ) );
-		});
-		add_filter( "plugin_action_links_".plugin_basename(__FILE__), function($links) {
-		    array_push( $links, '<a href="options-general.php?page=wordpress-hashtags">' . __( 'Settings' ) . '</a>' );
-		  	return $links;
-		});
-
-		add_action('admin_enqueue_scripts', function() {
-			if( isset( $_GET['page'] ) && $_GET['page'] == 'wordpress-hashtags' ) {
-				wp_enqueue_script('wpht-admin-js', plugin_dir_url(__FILE__) . 'assets/admin.js' );
-				wp_enqueue_style('wpht-admin-css', plugin_dir_url(__FILE__) . 'assets/admin.css' );
-			}
-		});
-
-		add_shortcode('wp-hashtag', function( $atts, $content = null ) {
-			return do_shortcode( $this->filter( $content ) );
-		});
-
-	}
-
-	public function filter($content) {
-
-		$content = str_replace( array('href="#', 'href=\'#', 'href=#'), array('href="{nulled_hash}', 'href=\'{nulled_hash}', 'href={nulled_hash}'), $content );
-
-		if( !empty( $this->settings['ignored'] ) ) :
-
-			foreach( $this->settings['ignored'] as $ignored ) :;
-
-				$content = str_replace( '#'. $ignored, '{ignore_hash}' . $ignored, $content );
-
-			endforeach;
-
-		endif;
-
-		$href 	= str_replace('[hashtag]', '$1', $this->settings['path']);
-		$title 	= str_replace('[hashtag]', '$1', $this->settings['link_settings_json']['title']);
-		$atts 	= ' title="' . $title . '"';
-		
-		$class 	= $this->settings['link_settings_json']['class'];
-		$atts 	.= $class !== '' ? ' class="'. $class .'"' : '';
-
-		$style 	= $this->settings['link_settings_json']['css'];
-		$atts 	.= $style !== '' ? ' style="'. $style .'"' : '';
-
-		$blank 	= $this->settings['link_settings_json']['_blank'];
-		$atts 	.= $blank == '1' ? ' target="_blank"' : '';
-
-		$nofollow 	= $this->settings['link_settings_json']['nofollow'];
-		$atts 		.= $nofollow == '1' ? ' rel="nofollow"' : '';
-
-		$link = '<a href="' . $href . '"' . $atts . '>#[hashtag]</a>';
-
-		$content = preg_replace('/#(\w+)/', str_replace('[hashtag]', '$1', $link), html_entity_decode($content));
-		$content = str_replace( array( '{nulled_hash}', '{ignore_hash}' ), '#',  $content );
-		return $content;
-
-	}
-
-	function wpht_settings() {
 
 		?>
 
@@ -232,7 +288,7 @@ class WPHT
 							<tr>
 								<td>
 									<input type="hidden" value="<?php echo $this->settings['filtered']; ?>" id="wpht_filtered" name="wpht_filtered" />
-									<input type="hidden" value="<?php echo $this->settings['link_settings']; ?>" id="wpht_lsettings" name="wpht_lsettings" />
+									<input type="hidden" value="<?php echo str_replace('"','\'',$this->settings['link_settings']); ?>" id="wpht_lsettings" name="wpht_lsettings" />
 									<?php submit_button(); ?>
 								</td>
 							</tr>
@@ -279,15 +335,17 @@ class WPHT
 
 					<h3>Are you looking for help?</h3>
 					<p>Don't worry, we got you covered:</p>
+					<li><a href="http://wordpress.org/support/plugin/wp-hashtags">Go to plugin support forum on WordPress</a></li>
 					<li><a href="http://support.samelh.com/">Try our Support forum</a></li>
 					<li><a href="http://blog.samelh.com/">Browse our blog for tutorials</a></li>
-					<li><a href="http://wordpress.org/support/plugin/wp-hashtags">Plugin support forum on WordPress</a></li>
 					<p><hr/></p>
 
 					<p>
 						<li><a href="https://wordpress.org/support/view/plugin-reviews/wp-hashtags?rate=5#postform">Give us &#9733;&#9733;&#9733;&#9733;&#9733; rating</a></li>
-						<li><a href="http://twitter.com/samuel_elh">Follow on Twitter</a></li>
+						<li><a href="http://twitter.com/samuel_elh">Follow @Samuel_Elh on Twitter</a></li>
 					</p>
+
+					<p>Thank you! :)</p>
 
 				</div>
 
@@ -299,5 +357,5 @@ class WPHT
 
 }
 
-$WPHT = new WPHT;
-$WPHT->init();
+// Load it!
+WPHT::instance()->init();
