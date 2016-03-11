@@ -71,3 +71,7 @@ For support topics please use the plugin's dedicated support forum here on WordP
 = 0.1 =
 
 * Initial release.
+
+
+#Note:
+I may not keep upating this repository but you can get the latest version on WordPress.org https://wordpress.org/plugins/wp-hashtags/
