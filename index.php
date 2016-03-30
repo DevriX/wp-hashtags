@@ -2,10 +2,9 @@
 
 /*
 Plugin Name: WordPress Hashtags
-Plugin URI: 
 Description: WordPress Hashtags allows you to automatically fetch your blog content and detect hashtags and set them as links
 Author: Samuel Elh
-Version: 0.3
+Version: 0.3.1.1 beta
 Author URI: http://samelh.com
 */
 
@@ -81,33 +80,40 @@ class WPHT
 		if( in_array( 'bp', $this->settings['filter'] ) )
 			add_filter('bp_get_activity_content_body', array( &$this, 'filter'));
 
-		add_action( 'admin_menu', function() {
-			add_options_page( 'WordPress Hashtags', 'WP Hashtags', 'manage_options', 'wordpress-hashtags', array( &$this, 'wpht_settings' ) );
-		});
+		add_action( 'admin_menu', array( &$this, 'wpht_add_options_page'));
+		add_filter( "plugin_action_links_".plugin_basename(__FILE__), array( &$this, 'wpht_push_settings_link'));
+		add_action('admin_enqueue_scripts', array( &$this, 'wpht_admin_enqueue_scripts'));
+		add_shortcode('wp-hashtag', array( &$this, 'wpht_shortcode'));
 
-		add_filter( "plugin_action_links_".plugin_basename(__FILE__), function($links) {
-		    array_push( $links, '<a href="options-general.php?page=wordpress-hashtags">' . __( 'Settings' ) . '</a>' );
-		  	return $links;
-		});
+	}
 
-		add_action('admin_enqueue_scripts', function() {
-			if( isset( $_GET['page'] ) && $_GET['page'] == 'wordpress-hashtags' ) {
-				wp_enqueue_script('wpht-admin-js', plugin_dir_url(__FILE__) . 'assets/admin.js' );
-				wp_enqueue_style('wpht-admin-css', plugin_dir_url(__FILE__) . 'assets/admin.css' );
-			}
-		});
+	public function wpht_add_options_page() {
+		add_options_page( 'WordPress Hashtags', 'WP Hashtags', 'manage_options', 'wordpress-hashtags', array( &$this, 'wpht_settings' ) );
+	}
 
-		add_shortcode('wp-hashtag', function( $atts, $content = null ) {
-			return do_shortcode( $this->filter( $content ) );
-		});
+	public function wpht_push_settings_link($links) {
+	    array_push( $links, '<a href="options-general.php?page=wordpress-hashtags">' . __( 'Settings' ) . '</a>' );
+	  	return $links;
+	}
 
+	public function wpht_shortcode( $atts, $content = null ) {
+		return do_shortcode( $this->filter( $content ) );
+	}
+
+	public function wpht_admin_enqueue_scripts() {
+		if( isset( $_GET['page'] ) && $_GET['page'] == 'wordpress-hashtags' ) {
+			wp_enqueue_script('wpht-admin-js', plugin_dir_url(__FILE__) . 'assets/admin.js' );
+			wp_enqueue_style('wpht-admin-css', plugin_dir_url(__FILE__) . 'assets/admin.css' );
+		}
 	}
 
 	public function filter( $content ) {
 
+		if( is_feed() )
+			return $content;
+
 		$original_content = $content;
 
-		#header('Content-Type: text/html; charset=utf-8');
 		$content = mb_convert_encoding( (string) $content, 'UTF-8', 'UTF-8');
 		$content = html_entity_decode($content, ENT_QUOTES);
 
@@ -164,7 +170,6 @@ class WPHT
 
 		$content = str_replace( $tarHashtags, $parsedHashtags, $content );
 
-		header('Content-Type: text/html; charset=utf-8');
 		return apply_filters( 'wpht_filter_content', $content, $original_content );
 
 	}
